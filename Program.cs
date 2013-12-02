@@ -66,16 +66,17 @@ namespace Test
 
 			(on ThinkPad, Intel Core i5 CPU @ 2.40GHz, 4GB RAM (3.80 usable), Win7 64bit)
 
-			"Loop" Test (deserializing x times the JSON contained in the tiny.json.txt file = 91 bytes):
+			"Loop" Test of tiny JSON (deserializing x times the JSON contained in the tiny.json.txt file = 91 bytes):
 			10,000 iterations: in ~ 110 milliseconds vs. JSON.NET 5.0 r8 in ~ 250 milliseconds
 			100,000 iterations: in ~ 850 milliseconds vs. JSON.NET 5.0 r8 in ~ 900 milliseconds
 			1,000,000 iterations: in ~ 8 seconds vs. JSON.NET 5.0 r8 in ~ 9 seconds
 
-			"Small" Test (deserializing x times the JSON contained in the small.json.txt file ~ 3.5 kb):
+			"Loop" Test of small JSON (deserializing x times the JSON contained in the small.json.txt file ~ 3.5 kb):
 			10,000 iterations: in ~ 2.1 seconds vs. JSON.NET 5.0 r8 in ~ 3.5 seconds
 			100,000 iterations: in ~ 22 seconds vs. JSON.NET 5.0 r8... OutOfMemoryException
 
-			Note: fathers.json.txt was generated using: http://experiments.mennovanslooten.nl/2010/mockjson/tryit.html
+			Note: fathers.json.txt was generated using:
+			http://experiments.mennovanslooten.nl/2010/mockjson/tryit.html
 
 			"Fathers" Test (12 mb JSON file):
 			Parsed in ~ 625 milliseconds vs. JSON.NET 5.0 r8 in ~ 600 milliseconds
