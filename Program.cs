@@ -1,4 +1,7 @@
-﻿using System;
+﻿// On GitHub:
+// https://github.com/ysharplanguage/JSONParser
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;

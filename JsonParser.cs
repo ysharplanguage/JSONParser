@@ -30,6 +30,10 @@ from Cyril Jandia.
 Inquiries : ysharp {dot} design {at} gmail {dot} com
  *
  */
+
+// On GitHub:
+// https://github.com/ysharplanguage/JSONParser
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
