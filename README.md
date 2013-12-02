@@ -1,4 +1,4 @@
-json
-====
+JSONParser
+==========
 
 Minimalistic JSON parser
