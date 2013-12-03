@@ -187,6 +187,19 @@ namespace Test
 			Test(typeof(JavaScriptSerializer).FullName, msJss.DeserializeObject, HUGE_TEST_FILE_PATH);
 			Test("JSON.NET 5.0 r8", JsonConvert.DeserializeObject, HUGE_TEST_FILE_PATH);//(JSON.NET: OutOfMemoryException)
 			Test(typeof(JsonParser).FullName, new JsonParser().Parse<object>, HUGE_TEST_FILE_PATH);
+
+			Console.Clear();
+			var stream = new System.IO.FileStream(FATHERS_TEST_FILE_PATH, System.IO.FileMode.Open);
+			Console.WriteLine("\"Fathers\" Test... streamed (press a key)");
+			Console.WriteLine();
+			Console.ReadKey();
+			var st = DateTime.Now;
+			var o = new JsonParser().Parse<FathersData>(stream);
+			System.Diagnostics.Debug.Assert(o.fathers.Length == 30000);
+			var tm = (int)DateTime.Now.Subtract(st).TotalMilliseconds;
+			Console.WriteLine();
+			Console.WriteLine("... {0} ms", tm);
+			Console.ReadKey();
 		}
 
 		static void Main(string[] args)
