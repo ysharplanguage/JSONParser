@@ -163,19 +163,17 @@ namespace System.Text.Json
             internal TypeInfo(ITypeCache cache, Type clr)
             {
                 Clr = clr;
-                if (clr != TYPEOF[VOID])
+                if (clr != typeof(void))
                 {
                     Type[] ga;
                     Type ie, elt = (((ie = Compiled.Realizes(clr, typeof(IEnumerable<>))) != null) ? ((((ga = ie.GetGenericArguments()) != null) && (ga.Length > 0)) ? ga[0] : null) : null);
                     ElementType = ((elt != null) ? cache.Entry(elt) : VOID);
                     ObjCtor = Compiled.Ctor(clr);
                     ArrCtor = Compiled.Ctor(typeof(List<>), clr);
-                    ((JsonParser)cache).SetPropInfos(Compiled.GetPropInfos(cache, clr));
                 }
             }
         }
 
-        private static readonly Type[] TYPEOF = new Type[4];
         private const int VOID = 0;
         private const int OBJECT = 1;
         private const int DOUBLE = 2;
@@ -203,17 +201,8 @@ namespace System.Text.Json
         private int chr;
         private int at;
 
-        internal void SetPropInfos(IDictionary<string, PropInfo> propInfos)
-        {
-            props[rtti.Count] = new PropInfos(propInfos);
-        }
-
         static JsonParser()
         {
-            TYPEOF[VOID] = typeof(void);
-            TYPEOF[OBJECT] = typeof(object);
-            TYPEOF[DOUBLE] = typeof(double);
-            TYPEOF[STRING] = typeof(string);
             ESC['/'] = '/'; ESC['\\'] = '\\';
             ESC['b'] = '\b'; ESC['f'] = '\f'; ESC['n'] = '\n'; ESC['r'] = '\r'; ESC['t'] = '\t';
             for (int c = 'A'; c <= 'Z'; c++) IDF[c] = IDN[c] = IDF[c + 32] = IDN[c + 32] = true;
@@ -241,27 +230,19 @@ namespace System.Text.Json
 
         private void Append(int c)
         {
-            if (c > EOF)
+            if (lln >= LBS)
             {
-                if (lln < LBS)
-                    lbf[lln++] = (char)c;
-                else
-                {
-                    lsb = (lsb ?? new StringBuilder().Append(new string(lbf, 0, lln)));
-                    lsb.Append((char)c);
-                }
+                lsb = (lsb ?? new StringBuilder().Append(new string(lbf, 0, lln)));
+                lsb.Append((char)c);
             }
             else
-            {
-                lsb = null;
-                lln = 0;
-            }
+                lbf[lln++] = (char)c;
         }
 
         private object Num(int outer)
         {
             var type = (outer >> 1);
-            Append(EOF);
+            lsb = null; lln = 0;
             if (chr == '-')
             {
                 Append(chr);
@@ -306,7 +287,7 @@ namespace System.Text.Json
                 int c = chr, i = 1, n = 0;
                 PropInfo[] pi = null;
                 Read();
-                Append(EOF);
+                lsb = null; lln = 0;
                 if ((type > OBJECT) && lkup)
                 {
                     var tpi = props[type].First;
@@ -382,14 +363,14 @@ namespace System.Text.Json
                 while (chr > EOF)
                 {
                     object k = Literal(-outer);
-                    var pi = (k as PropInfo);
                     Space();
                     Next(':');
-                    if (pi != null)
+                    if (type > OBJECT)
                     {
                         //FIXME: quick hack to be able to pass the burning monk's deserialization test, at:
                         //https://github.com/theburningmonk/SimpleSpeedTester
-                        if (lbf[0] != '$')
+                        var pi = (k as PropInfo);
+                        if ((lbf[0] != '$') && (pi != null))
                         {
                             var v = Val(pi.Type);
                             pi.PropSet(o, v);
@@ -499,8 +480,10 @@ namespace System.Text.Json
             parse['[' + 1] = Arr;
             for (var input = 0; input < 128; input++)
                 parse[input] = (parse[input] ?? Error);
-            for (var type = VOID; type < TYPEOF.Length; type++)
-                Entry(TYPEOF[type]);
+            Entry(typeof(void));
+            Entry(typeof(object));
+            Entry(typeof(double));
+            Entry(typeof(string));
         }
 
         public int Entry(Type type)
@@ -511,8 +494,9 @@ namespace System.Text.Json
             if (!rtti.TryGetValue(type, out cached))
             {
                 var ti = new TypeInfo(this, type);
-                types[cached = rtti.Count] = ti;
-                rtti.Add(type, cached);
+                rtti.Add(type, (cached = rtti.Count));
+                types[cached] = ti;
+                props[cached] = new PropInfos(Compiled.GetPropInfos(this, type));
             }
             return ((cached << 1) + (array ? 1 : 0));
         }
