@@ -205,6 +205,7 @@ namespace System.Text.Json
         {
             ESC['/'] = '/'; ESC['\\'] = '\\';
             ESC['b'] = '\b'; ESC['f'] = '\f'; ESC['n'] = '\n'; ESC['r'] = '\r'; ESC['t'] = '\t';
+            for (int c = ANY; c < 128; c++) if (ESC[c] == ANY) ESC[c] = (char)c;
             for (int c = 'A'; c <= 'Z'; c++) IDF[c] = IDN[c] = IDF[c + 32] = IDN[c + 32] = true;
             IDF['_'] = IDN['_'] = true;
             for (int c = '0'; c <= '9'; c++) IDN[c] = true;
@@ -279,43 +280,46 @@ namespace System.Text.Json
 
         private object Literal(int outer)
         {
+            bool eos = false, esc = false, sos = true;
             var lkup = (outer < VOID);
             var type = ((lkup ? -outer : outer) >> 1);
-            var p = -1;
             if (chr == '"')
             {
-                int c = chr, i = 1, n = 0;
+                int i = 0, n = 0, p = -1;
                 PropInfo[] pi = null;
-                Read();
-                lsb = null; lln = 0;
-                if ((type > OBJECT) && lkup)
+                while (!eos)
                 {
-                    var tpi = props[type].First;
-                    lkup = ((chr > EOF) && (chr < 128) && IDF[chr] && (tpi[chr] != null));
-                    if (lkup)
-                    {
-                        pi = tpi[chr];
-                        n = pi.Length;
-                        p = 0;
-                    }
-                }
-                while ((chr > EOF) && ((chr != '"') || (c == '\\')))
-                {
-                    var r = (char)chr;
-                    if (c == '\\')
-                    {
-                        if ((r < 128) && (ESC[r] > ANY))
-                            Append(ESC[r]);
-                        else
-                            Append(r);
-                    }
-                    else
-                    {
-                        if (r != '\\')
-                            Append(r);
-                    }
-                    c = chr;
                     Read();
+                    if (sos)
+                    {
+                        lsb = null; lln = 0;
+                        if ((type > OBJECT) && lkup)
+                        {
+                            var tpi = props[type].First;
+                            lkup = ((chr > EOF) && (chr < 128) && IDF[chr] && (tpi[chr] != null));
+                            if (lkup)
+                            {
+                                pi = tpi[chr];
+                                n = pi.Length;
+                                p = 0;
+                            }
+                        }
+                    }
+                    switch (chr)
+                    {
+                        case '\\':
+                            esc = true;
+                            Read();
+                            break;
+                        case '"':
+                            Read();
+                            return ((p >= 0) ? (object)pi[p] : Chars());
+                        default:
+                            break;
+                    }
+                    eos |= (chr == EOF);
+                    if (!eos) Append((esc && (chr < 128)) ? ESC[chr] : chr);
+                    esc = sos = false;
                     if ((p >= 0) && (chr > EOF) && (chr < 128) && IDN[chr])
                     {
                         string pn;
@@ -325,11 +329,6 @@ namespace System.Text.Json
                             p = -1;
                     }
                     i++;
-                }
-                if (chr == '"')
-                {
-                    Read();
-                    return ((p >= 0) ? (object)pi[p] : Chars());
                 }
             }
             throw Error((type > OBJECT) ? "Bad literal" : "Bad key");
