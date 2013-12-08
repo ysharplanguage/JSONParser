@@ -1,4 +1,4 @@
 JSONParser
 ==========
 
-Minimalistic JSON parser
+A minimalistic, fast JSON parser
