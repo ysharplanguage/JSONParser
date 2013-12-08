@@ -37,50 +37,70 @@ Inquiries : ysharp {dot} design {at} gmail {dot} com
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Text;
 
 namespace System.Text.Json
 {
-    public interface ITypeCache
+    public class JsonParser
     {
-        int Entry(Type type);
-    }
+        private static readonly char[] ESC = new char[128];
+        private static readonly bool[] IDF = new bool[128];
+        private static readonly bool[] IDN = new bool[128];
+        private const char ANY = char.MinValue;
+        private const char EOF = char.MaxValue;
+        private const int LBS = 128;
+        private const int TDS = 128;
+        private const int OBJECT = 0;
+        private const int ARRAY = 1;
+        private const int STRING = 2;
+        private const int DOUBLE = 3;
 
-    public class JsonParser : ITypeCache
-    {
-        internal class Compiled
+        private IDictionary<Type, int> rtti = new Dictionary<Type, int>();
+        private TypeInfo[] types = new TypeInfo[TDS];
+
+        private Func<int, object>[] parse = new Func<int, object>[128];
+        private StringBuilder lsb = new StringBuilder();
+        private char[] stc = new char[2] { EOF, ANY };
+        private char[] lbf = new char[LBS];
+        private Func<char> Read;
+        private System.IO.StreamReader str;
+        private char[] txt;
+        private char chr;
+        private int len;
+        private int at;
+
+        internal class PropInfo
         {
-            internal static Func<object> Ctor(Type clr)
+            internal Action<object, object> Set;
+            internal Type Type;
+        }
+
+        internal class TypeInfo
+        {
+            internal IDictionary<string, PropInfo> Props;
+            internal Func<object> Ctor;
+            internal Type ElementType;
+            internal Type Type;
+            internal int Inner;
+
+            internal TypeInfo(Type type, Func<object> ctor)
             {
-                return Ctor(clr, null);
+                var pis =
+                    type.
+                    GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public).
+                    Where(p => p.CanWrite).
+                    ToArray();
+                Type = type;
+                Ctor = ctor;
+                Props = new Dictionary<string, PropInfo>();
+                for (var i = 0; i < pis.Length; i++)
+                    Props.Add(pis[i].Name, PropInfo(pis[i]));
             }
 
-            internal static Func<object> Ctor(Type clr, Type elt)
+            private static PropInfo PropInfo(System.Reflection.PropertyInfo pi)
             {
-                var type = ((elt != null) ? clr.MakeGenericType(elt) : clr);
-                var ctor =
-                    type.GetConstructor
-                    (
-                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.CreateInstance,
-                        null, System.Type.EmptyTypes, null
-                    );
-                if (ctor != null)
-                {
-                    var dyn = new System.Reflection.Emit.DynamicMethod("", typeof(object), null, type, true);
-                    var il = dyn.GetILGenerator();
-                    il.Emit(System.Reflection.Emit.OpCodes.Newobj, ctor);
-                    il.Emit(System.Reflection.Emit.OpCodes.Ret);
-                    return (Func<object>)dyn.CreateDelegate(typeof(Func<object>));
-                }
-                else
-                    return null;
-            }
-
-            internal static Action<object, object> PropSet(Type clr, System.Reflection.PropertyInfo pi)
-            {
-                var dyn = new System.Reflection.Emit.DynamicMethod("", null, new Type[] { typeof(object), typeof(object) }, clr);
+                var dyn = new System.Reflection.Emit.DynamicMethod("", null, new Type[] { typeof(object), typeof(object) }, typeof(PropInfo));
                 var il = dyn.GetILGenerator();
                 il.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);
                 il.Emit(System.Reflection.Emit.OpCodes.Ldarg_1);
@@ -88,118 +108,30 @@ namespace System.Text.Json
                     il.Emit(System.Reflection.Emit.OpCodes.Unbox_Any, pi.PropertyType);
                 il.Emit(System.Reflection.Emit.OpCodes.Callvirt, pi.GetSetMethod());
                 il.Emit(System.Reflection.Emit.OpCodes.Ret);
-                return (Action<object, object>)dyn.CreateDelegate(typeof(Action<object, object>));
-            }
-
-            internal static IDictionary<string, PropInfo> GetPropInfos(ITypeCache cache, Type clr)
-            {
-                var props = new Dictionary<string, PropInfo>();
-                var pis = clr.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
-                foreach (var pi in pis)
-                    if (pi.CanWrite)
-                        props.Add(pi.Name, new PropInfo(cache, pi.PropertyType, pi.Name, PropSet(clr, pi)));
-                return props;
-            }
-
-            internal static Type Realizes(Type type, Type generic)
-            {
-                var itfs = type.GetInterfaces();
-                foreach (var it in itfs)
-                    if (it.IsGenericType && it.GetGenericTypeDefinition() == generic)
-                        return type;
-                if (type.IsGenericType && type.GetGenericTypeDefinition() == generic)
-                    return type;
-                if (type.BaseType == null)
-                    return null;
-                return Realizes(type.BaseType, generic);
+                return new PropInfo { Type = pi.PropertyType, Set = (Action<object, object>)dyn.CreateDelegate(typeof(Action<object, object>)) };
             }
         }
 
-        internal class PropInfo
+        private static Func<object> Ctor(Type clr, bool list)
         {
-            internal readonly Type Clr;
-            internal readonly int Type;
-            internal readonly string Name;
-            internal readonly Action<object, object> PropSet;
-
-            internal PropInfo(ITypeCache cache, Type clr, string name, Action<object, object> propSet)
+            var type = (list ? typeof(List<>).MakeGenericType(clr) : clr);
+            var ctor =
+                type.GetConstructor
+                (
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.CreateInstance,
+                    null, System.Type.EmptyTypes, null
+                );
+            if (ctor != null)
             {
-                Type = cache.Entry(Clr = clr);
-                Name = name;
-                PropSet = propSet;
+                var dyn = new System.Reflection.Emit.DynamicMethod("", typeof(object), null, type, true);
+                var il = dyn.GetILGenerator();
+                il.Emit(System.Reflection.Emit.OpCodes.Newobj, ctor);
+                il.Emit(System.Reflection.Emit.OpCodes.Ret);
+                return (Func<object>)dyn.CreateDelegate(typeof(Func<object>));
             }
+            else
+                return null;
         }
-
-        internal class PropInfos
-        {
-            internal readonly PropInfo[][] First = new PropInfo[128][];
-
-            internal PropInfos(IDictionary<string, PropInfo> propInfos)
-            {
-                for (var ch = 'A'; ch <= 'z'; ch++)
-                {
-                    if (IDF[ch])
-                    {
-                        var sp = new SortedDictionary<string, PropInfo>();
-                        foreach (var pi in propInfos)
-                        {
-                            if (pi.Key[0] == ch)
-                                sp.Add(pi.Key, pi.Value);
-                        }
-                        if (sp.Values.Count > 0)
-                            First[ch] = sp.Values.ToArray();
-                    }
-                }
-            }
-        }
-
-        internal class TypeInfo
-        {
-            internal readonly Type Clr;
-            internal readonly int ElementType;
-            internal readonly Func<object> ObjCtor;
-            internal readonly Func<object> ArrCtor;
-
-            internal TypeInfo(ITypeCache cache, Type clr)
-            {
-                Clr = clr;
-                if (clr != typeof(void))
-                {
-                    Type[] ga;
-                    Type ie, elt = (((ie = Compiled.Realizes(clr, typeof(IEnumerable<>))) != null) ? ((((ga = ie.GetGenericArguments()) != null) && (ga.Length > 0)) ? ga[0] : null) : null);
-                    ElementType = ((elt != null) ? cache.Entry(elt) : VOID);
-                    ObjCtor = Compiled.Ctor(clr);
-                    ArrCtor = Compiled.Ctor(typeof(List<>), clr);
-                }
-            }
-        }
-
-        private const int VOID = 0;
-        private const int OBJECT = 1;
-        private const int DOUBLE = 2;
-        private const int STRING = 3;
-        private static readonly char[] ESC = new char[128];
-        private static readonly bool[] IDF = new bool[128];
-        private static readonly bool[] IDN = new bool[128];
-        private const char ANY = char.MinValue;
-        private const int EOF = -1;
-        private const int LBS = 128;
-
-        private IDictionary<Type, int> rtti = new Dictionary<Type, int>();
-        private PropInfos[] props = new PropInfos[128];
-        private TypeInfo[] types = new TypeInfo[128];
-
-        private Func<int, object>[] parse = new Func<int, object>[128];
-        private char[] lbf = new char[LBS];
-        private char[] stc = new char[1];
-        private StringBuilder lsb;
-        private Func<int> Read;
-        private StreamReader str;
-        private string txt;
-        private int len;
-        private int lln;
-        private int chr;
-        private int at;
 
         static JsonParser()
         {
@@ -211,39 +143,34 @@ namespace System.Text.Json
             for (int c = '0'; c <= '9'; c++) IDN[c] = true;
         }
 
-        private Exception Error(string message) { return new Exception(String.Format("{0} at {1} (found: '{2}'{3})", message, at, ((chr > EOF) ? ("" + (char)chr) : "EOF"), chr)); }
-        private int FromStream() { return (chr = ((str.Read(stc, 0, 1) > 0) ? stc[0] : EOF)); }
-        private int FromString() { return (chr = ((++at < len) ? txt[at] : EOF)); }
-        private void Reset(Func<int> read) { chr = ANY; at = EOF; Read = read; }
-        private int Next(char ch) { if (chr != ch) throw Error("Unexpected character"); return Read(); }
-        private void Space() { if ((chr > EOF) && (chr <= ' ')) while ((Read() <= ' ') && (chr > EOF)); }
+        private Exception Error(string message) { return new Exception(String.Format("{0} at {1} (found: '{2}')", message, at, ((chr < EOF) ? ("\\" + (int)chr) : "EOF"))); }
+        private char FromStream() { return (chr = stc[str.Read(stc, 1, 1)]); }
+        private char FromString() { return (chr = txt[++at]); }
+        private char Next(char ch) { if (chr != ch) throw Error("Unexpected character"); return Read(); }
+        private void Reset(Func<char> read) { at = -1; chr = ANY; Read = read; }
+        private void Space() { if (chr <= ' ') while (Read() <= ' ') ; }
 
         private object Error(int outer) { throw Error("Bad value"); }
         private object Null(int outer) { Next('n'); Next('u'); Next('l'); Next('l'); return null; }
         private object False(int outer) { Next('f'); Next('a'); Next('l'); Next('s'); Next('e'); return false; }
         private object True(int outer) { Next('t'); Next('r'); Next('u'); Next('e'); return true; }
 
-        private string Chars()
+        private void Append(char ch)
         {
-            var chars = ((lsb != null) ? lsb.ToString() : new string(lbf, 0, lln));
-            return chars;
-        }
-
-        private void Append(int c)
-        {
-            if (lln >= LBS)
+            if (len >= LBS)
             {
-                lsb = (lsb ?? new StringBuilder().Append(new string(lbf, 0, lln)));
-                lsb.Append((char)c);
+                if (lsb.Length == 0)
+                    lsb.Append(new string(lbf, 0, len));
+                lsb.Append(ch);
             }
             else
-                lbf[lln++] = (char)c;
+                lbf[len++] = ch;
         }
 
         private object Num(int outer)
         {
-            var type = (outer >> 1);
-            lsb = null; lln = 0;
+            string s;
+            lsb.Length = 0; len = 0;
             if (chr == '-')
             {
                 Append(chr);
@@ -257,7 +184,7 @@ namespace System.Text.Json
             if (chr == '.')
             {
                 Append(chr);
-                while ((Read() > EOF) && (chr >= '0') && (chr <= '9'))
+                while ((Read() >= '0') && (chr <= '9'))
                     Append(chr);
             }
             if ((chr == 'e') || (chr == 'E'))
@@ -275,36 +202,20 @@ namespace System.Text.Json
                     Read();
                 }
             }
-            return (((type > OBJECT) && (type != STRING)) ? Convert.ChangeType(Chars(), types[type].Clr) : Chars());
+            s = ((lsb.Length > 0) ? lsb.ToString() : new string(lbf, 0, len));
+            return ((outer > STRING) ? Convert.ChangeType(s, types[outer].Type) : s);
         }
 
-        private object Literal(int outer)
+        private object Str(int outer)
         {
-            bool eos = false, esc = false, sos = true;
-            var lkup = (outer < VOID);
-            var type = ((lkup ? -outer : outer) >> 1);
+            bool eos = false, esc = false;
+            string s;
             if (chr == '"')
             {
-                int i = 0, n = 0, p = -1;
-                PropInfo[] pi = null;
+                lsb.Length = 0; len = 0;
                 while (!eos)
                 {
                     Read();
-                    if (sos)
-                    {
-                        lsb = null; lln = 0;
-                        if ((type > OBJECT) && lkup)
-                        {
-                            var tpi = props[type].First;
-                            lkup = ((chr > EOF) && (chr < 128) && IDF[chr] && (tpi[chr] != null));
-                            if (lkup)
-                            {
-                                pi = tpi[chr];
-                                n = pi.Length;
-                                p = 0;
-                            }
-                        }
-                    }
                     switch (chr)
                     {
                         case '\\':
@@ -313,80 +224,64 @@ namespace System.Text.Json
                             break;
                         case '"':
                             Read();
-                            return ((p >= 0) ? (object)pi[p] : Chars());
+                            s = ((lsb.Length > 0) ? lsb.ToString() : new string(lbf, 0, len));
+                            return ((outer > STRING) ? Convert.ChangeType(s, types[outer].Type) : s);
                         default:
                             break;
                     }
                     eos |= (chr == EOF);
                     if (!eos) Append((esc && (chr < 128)) ? ESC[chr] : chr);
-                    esc = sos = false;
-                    if ((p >= 0) && (chr > EOF) && (chr < 128) && IDN[chr])
-                    {
-                        string pn;
-                        while ((p < n) && (i < (pn = pi[p].Name).Length) && (chr > pn[i]))
-                            p++;
-                        if ((p >= n) || (i >= (pn = pi[p].Name).Length) || (chr < pn[i]))
-                            p = -1;
-                    }
-                    i++;
+                    esc = false;
                 }
             }
-            throw Error((type > OBJECT) ? "Bad literal" : "Bad key");
-        }
-
-        private object Str(int outer)
-        {
-            var type = (outer >> 1);
-            return (((type > OBJECT) && (type != STRING)) ? Convert.ChangeType(Literal(outer), types[type].Clr) : Literal(outer));
+            throw Error((outer > OBJECT) ? "Bad literal" : "Bad key");
         }
 
         private object Obj(int outer)
         {
-            var type = (outer >> 1);
+            IDictionary hash = null;
+            object obj = null;
+            if (outer > OBJECT)
+                obj = types[outer].Ctor();
+            else
+                hash = new Dictionary<string, object>();
             if (chr == '{')
             {
-                IDictionary<string, object> d = null;
-                TypeInfo ti = null;
-                object o = null;
                 Read();
                 Space();
-                if (type > OBJECT)
-                    o = (ti = types[type]).ObjCtor();
-                else
-                    d = new Dictionary<string, object>();
                 if (chr == '}')
                 {
                     Read();
-                    return (o ?? d);
+                    return (obj ?? hash);
                 }
-                while (chr > EOF)
+                while (chr < EOF)
                 {
-                    object k = Literal(-outer);
+                    var key = (string)Str(OBJECT);
                     Space();
                     Next(':');
-                    if (type > OBJECT)
+                    Space();
+                    if ((outer > OBJECT) && (key.Length > 0))
                     {
                         //FIXME: quick hack to be able to pass the burning monk's deserialization test, at:
                         //https://github.com/theburningmonk/SimpleSpeedTester
-                        var pi = (k as PropInfo);
-                        if ((lbf[0] != '$') && (pi != null))
+                        if (key[0] != '$')
                         {
-                            var v = Val(pi.Type);
-                            pi.PropSet(o, v);
+                            PropInfo pi;
+                            if (types[outer].Props.TryGetValue(key, out pi))
+                                pi.Set(obj, Val(Entry(pi.Type)));
+                            else
+                                Val(OBJECT);
                         }
                         else
-                            Val(OBJECT << 1);
+                            Val(OBJECT);
                     }
                     else
-                    {
-                        var v = Val(OBJECT << 1);
-                        d[(string)k] = v;
-                    }
+                        hash.Add(key, Val(OBJECT));
                     Space();
                     if (chr == '}')
                     {
                         Read();
-                        return (o ?? d);
+                        return (obj ?? hash);
                     }
                     Next(',');
                     Space();
@@ -397,44 +292,40 @@ namespace System.Text.Json
 
         private object Arr(int outer)
         {
-            var array = ((outer % 2) != 0);
-            var type = (outer >> 1);
-            var inner = types[type].ElementType;
+            IList list;
+            outer = ((outer >= ARRAY) ? outer : ARRAY);
             if (chr == '[')
             {
-                TypeInfo ti;
-                IList l;
                 Read();
                 Space();
-                l = (IList)(ti = types[(inner > VOID) ? (inner >> 1) : type]).ArrCtor();
+                list = (IList)types[outer].Ctor();
                 if (chr == ']')
                 {
                     Read();
-                    if (array)
+                    if (types[outer].Type.IsArray)
                     {
-                        var a = Array.CreateInstance(ti.Clr, l.Count);
-                        l.CopyTo(a, 0);
-                        return a;
+                        var array = Array.CreateInstance(types[outer].ElementType, list.Count);
+                        list.CopyTo(array, 0);
+                        return array;
                     }
                     else
-                        return l;
+                        return list;
                 }
-                while (chr > EOF)
+                while (chr < EOF)
                 {
-                    var v = Val(!array ? ((inner > VOID) ? inner : outer) : outer);
-                    l.Add(v);
+                    list.Add(Val(types[outer].Inner));
                     Space();
                     if (chr == ']')
                     {
                         Read();
-                        if (array)
+                        if (types[outer].Type.IsArray)
                         {
-                            var a = Array.CreateInstance(ti.Clr, l.Count);
-                            l.CopyTo(a, 0);
-                            return a;
+                            var array = Array.CreateInstance(types[outer].ElementType, list.Count);
+                            list.CopyTo(array, 0);
+                            return array;
                         }
                         else
-                            return l;
+                            return list;
                     }
                     Next(',');
                     Space();
@@ -443,16 +334,50 @@ namespace System.Text.Json
             throw Error("Bad array");
         }
 
+        private Type GetElementType(Type type)
+        {
+            if (type.IsArray)
+                return type.GetElementType();
+            else if (typeof(System.Collections.IEnumerable).IsAssignableFrom(type))
+                return (type.IsGenericType ? type.GetGenericArguments()[0] : typeof(object));
+            else
+                return null;
+        }
+
+        private int Entry(Type type)
+        {
+            return Entry(type, null);
+        }
+
+        private int Entry(Type type, Type elem)
+        {
+            int outer;
+            if (!rtti.TryGetValue(type, out outer))
+            {
+                bool b = (elem != null);
+                outer = rtti.Count;
+                elem = (elem ?? GetElementType(type));
+                types[outer] = new TypeInfo(type, Ctor((elem ?? type), (elem != null)));
+                rtti.Add(type, outer);
+                if (elem != null)
+                {
+                    types[outer].ElementType = elem;
+                    if (!b) types[outer].Inner = Entry(elem);
+                }
+            }
+            return outer;
+        }
+
         private object Val(int outer)
         {
             Space();
-            return parse[(chr + 1) & 0x7f](outer);
+            return parse[chr & 0x7f](outer);
         }
 
-        private T DoParse<T>(Stream input)
+        private T DoParse<T>(System.IO.Stream input)
         {
             Reset(FromStream);
-            using (str = new StreamReader(input))
+            using (str = new System.IO.StreamReader(input))
             {
                 return (T)Val(Entry(typeof(T)));
             }
@@ -460,53 +385,36 @@ namespace System.Text.Json
 
         private T DoParse<T>(string input)
         {
+            var len = input.Length;
+            txt = new char[len + 1];
+            txt[len] = EOF;
+            input.CopyTo(0, txt, 0, len);
             Reset(FromString);
-            txt = (string)input;
-            len = txt.Length;
             return (T)Val(Entry(typeof(T)));
         }
 
         public JsonParser()
         {
-            parse['n' + 1] = Null;
-            parse['f' + 1] = False;
-            parse['t' + 1] = True;
-            parse['0' + 1] = parse['1' + 1] = parse['2' + 1] = parse['3' + 1] = parse['4' + 1] =
-            parse['5' + 1] = parse['6' + 1] = parse['7' + 1] = parse['8' + 1] = parse['9' + 1] =
-            parse['-' + 1] = Num;
-            parse['"' + 1] = Str;
-            parse['{' + 1] = Obj;
-            parse['[' + 1] = Arr;
-            for (var input = 0; input < 128; input++)
-                parse[input] = (parse[input] ?? Error);
-            Entry(typeof(void));
+            parse['n'] = Null; parse['f'] = False; parse['t'] = True;
+            parse['0'] = parse['1'] = parse['2'] = parse['3'] = parse['4'] =
+            parse['5'] = parse['6'] = parse['7'] = parse['8'] = parse['9'] =
+            parse['-'] = Num; parse['"'] = Str; parse['{'] = Obj; parse['['] = Arr;
+            for (var input = 0; input < 128; input++) parse[input] = (parse[input] ?? Error);
             Entry(typeof(object));
+            Entry(typeof(object[]), typeof(object));
+            Entry(typeof(string), typeof(char));
             Entry(typeof(double));
-            Entry(typeof(string));
         }
 
-        public int Entry(Type type)
+        public T Parse<T>(System.IO.Stream input)
         {
-            bool array = type.IsArray;
-            int cached;
-            type = (array ? type.GetElementType() : type);
-            if (!rtti.TryGetValue(type, out cached))
-            {
-                var ti = new TypeInfo(this, type);
-                rtti.Add(type, (cached = rtti.Count));
-                types[cached] = ti;
-                props[cached] = new PropInfos(Compiled.GetPropInfos(this, type));
-            }
-            return ((cached << 1) + (array ? 1 : 0));
-        }
-
-        public T Parse<T>(Stream input)
-        {
+            if (input == null) throw new ArgumentNullException("input", "cannot be null");
             return DoParse<T>(input);
         }
 
         public T Parse<T>(string input)
         {
+            if (input == null) throw new ArgumentNullException("input", "cannot be null");
             return DoParse<T>(input);
         }
     }
