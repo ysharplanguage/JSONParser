@@ -47,8 +47,8 @@ namespace System.Text.Json
         private static readonly char[] ESC = new char[128];
         private static readonly bool[] IDF = new bool[128];
         private static readonly bool[] IDN = new bool[128];
-        private const char ANY = char.MinValue;
-        private const char EOF = char.MaxValue;
+        private const int EOF = (char.MaxValue + 1);
+        private const int ANY = 0;
         private const int LBS = 128;
         private const int TDS = 128;
         private const int OBJECT = 0;
@@ -61,13 +61,17 @@ namespace System.Text.Json
 
         private Func<int, object>[] parse = new Func<int, object>[128];
         private StringBuilder lsb = new StringBuilder();
-        private char[] stc = new char[2] { EOF, ANY };
         private char[] lbf = new char[LBS];
-        private Func<char> Read;
+        private char[] stc = new char[1];
         private System.IO.StreamReader str;
+        private Func<int, int> Next;
+        private Action<int> Char;
+        private Func<int> Read;
+        private Action Space;
         private char[] txt;
-        private char chr;
         private int len;
+        private int lln;
+        private int chr;
         private int at;
 
         internal class PropInfo
@@ -143,79 +147,87 @@ namespace System.Text.Json
             for (int c = '0'; c <= '9'; c++) IDN[c] = true;
         }
 
-        private Exception Error(string message) { return new Exception(String.Format("{0} at {1} (found: '{2}')", message, at, ((chr < EOF) ? ("\\" + (int)chr) : "EOF"))); }
-        private char FromStream() { return (chr = stc[str.Read(stc, 1, 1)]); }
-        private char FromString() { return (chr = txt[++at]); }
-        private char Next(char ch) { if (chr != ch) throw Error("Unexpected character"); return Read(); }
-        private void Reset(Func<char> read) { at = -1; chr = ANY; Read = read; }
-        private void Space() { if (chr <= ' ') while (Read() <= ' ') ; }
+        private Exception Error(string message) { return new Exception(String.Format("{0} at {1} (found: '{2}')", message, at, ((chr < EOF) ? ("\\" + chr) : "EOF"))); }
+        private void Reset(Func<int> read, Func<int, int> next, Action<int> achar, Action space) { at = -1; chr = ANY; Read = read; Next = next; Char = achar; Space = space; }
 
         private object Error(int outer) { throw Error("Bad value"); }
         private object Null(int outer) { Next('n'); Next('u'); Next('l'); Next('l'); return null; }
         private object False(int outer) { Next('f'); Next('a'); Next('l'); Next('s'); Next('e'); return false; }
         private object True(int outer) { Next('t'); Next('r'); Next('u'); Next('e'); return true; }
 
-        private void Append(char ch)
+        private void StreamSpace() { if (chr <= ' ') while ((chr = (str.Read(stc, 0, 1) > 0) ? stc[0] : EOF) <= ' ') ; }
+        private int StreamRead() { return (chr = (str.Read(stc, 0, 1) > 0) ? stc[0] : EOF); }
+        private int StreamNext(int ch) { if (chr != ch) throw Error("Unexpected character"); return (chr = (str.Read(stc, 0, 1) > 0) ? stc[0] : EOF); }
+        private void StreamChar(int ch)
         {
-            if (len >= LBS)
+            if (lln >= LBS)
             {
                 if (lsb.Length == 0)
-                    lsb.Append(new string(lbf, 0, len));
-                lsb.Append(ch);
+                    lsb.Append(new string(lbf, 0, lln));
+                lsb.Append((char)ch);
             }
             else
-                lbf[len++] = ch;
+                lbf[lln++] = (char)ch;
+            chr = ((str.Read(stc, 0, 1) > 0) ? stc[0] : EOF);
+        }
+
+        private void StringSpace() { if (chr <= ' ') while ((++at < len) && ((chr = txt[at]) <= ' ')) ; }
+        private int StringRead() { return (chr = (++at < len) ? txt[at] : EOF); }
+        private int StringNext(int ch) { if (chr != ch) throw Error("Unexpected character"); return (chr = (++at < len) ? txt[at] : EOF); }
+        private void StringChar(int ch)
+        {
+            if (lln >= LBS)
+            {
+                if (lsb.Length == 0)
+                    lsb.Append(new string(lbf, 0, lln));
+                lsb.Append((char)ch);
+            }
+            else
+                lbf[lln++] = (char)ch;
+            chr = ((++at < len) ? txt[at] : EOF);
+        }
+
+        private void Esc(int ch)
+        {
+            Char(ESC[ch]);
         }
 
         private object Num(int outer)
         {
             string s;
-            lsb.Length = 0; len = 0;
+            lsb.Length = 0; lln = 0;
             if (chr == '-')
-            {
-                Append(chr);
-                Read();
-            }
+                Char(chr);
             while ((chr >= '0') && (chr <= '9'))
-            {
-                Append(chr);
-                Read();
-            }
+                Char(chr);
             if (chr == '.')
             {
-                Append(chr);
-                while ((Read() >= '0') && (chr <= '9'))
-                    Append(chr);
+                Char(chr);
+                while ((chr >= '0') && (chr <= '9'))
+                    Char(chr);
             }
             if ((chr == 'e') || (chr == 'E'))
             {
-                Append(chr);
-                Read();
+                Char(chr);
                 if ((chr == '-') || (chr == '+'))
-                {
-                    Append(chr);
-                    Read();
-                }
+                    Char(chr);
                 while ((chr >= '0') && (chr <= '9'))
-                {
-                    Append(chr);
-                    Read();
-                }
+                    Char(chr);
             }
-            s = ((lsb.Length > 0) ? lsb.ToString() : new string(lbf, 0, len));
+            s = ((lsb.Length > 0) ? lsb.ToString() : new string(lbf, 0, lln));
             return ((outer > STRING) ? Convert.ChangeType(s, types[outer].Type) : s);
         }
 
         private object Str(int outer)
         {
-            bool eos = false, esc = false;
+            var esc = false;
             string s;
             if (chr == '"')
             {
-                lsb.Length = 0; len = 0;
-                while (!eos)
+                lsb.Length = 0; lln = 0;
+                Read();
+                while (true)
                 {
-                    Read();
                     switch (chr)
                     {
                         case '\\':
@@ -224,14 +236,12 @@ namespace System.Text.Json
                             break;
                         case '"':
                             Read();
-                            s = ((lsb.Length > 0) ? lsb.ToString() : new string(lbf, 0, len));
+                            s = ((lsb.Length > 0) ? lsb.ToString() : new string(lbf, 0, lln));
                             return ((outer > STRING) ? Convert.ChangeType(s, types[outer].Type) : s);
                         default:
                             break;
                     }
-                    eos |= (chr == EOF);
-                    if (!eos) Append((esc && (chr < 128)) ? ESC[chr] : chr);
-                    esc = false;
+                    if (chr < EOF) { if (esc && (chr < 128)) Esc(chr); else Char(chr); esc = false; } else break;
                 }
             }
             throw Error((outer > OBJECT) ? "Bad literal" : "Bad key");
@@ -376,7 +386,7 @@ namespace System.Text.Json
 
         private T DoParse<T>(System.IO.Stream input)
         {
-            Reset(FromStream);
+            Reset(StreamRead, StreamNext, StreamChar, StreamSpace);
             using (str = new System.IO.StreamReader(input))
             {
                 return (T)Val(Entry(typeof(T)));
@@ -385,11 +395,10 @@ namespace System.Text.Json
 
         private T DoParse<T>(string input)
         {
-            var len = input.Length;
-            txt = new char[len + 1];
-            txt[len] = EOF;
+            len = input.Length;
+            txt = new char[len];
             input.CopyTo(0, txt, 0, len);
-            Reset(FromString);
+            Reset(StringRead, StringNext, StringChar, StringSpace);
             return (T)Val(Entry(typeof(T)));
         }
 
