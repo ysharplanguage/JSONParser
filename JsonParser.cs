@@ -93,12 +93,8 @@ namespace System.Text.Json
             {
                 var props = new SortedList<string, PropInfo>();
                 var infos = type.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
-                for (var i = 0; i < infos.Length; i++)
-                    if (infos[i].CanWrite)
-                        props.Add(infos[i].Name, PropInfo(infos[i]));
-                Type = type;
-                Ctor = ctor;
-                Props = props.Values.ToArray();
+                for (var i = 0; i < infos.Length; i++) if (infos[i].CanWrite) props.Add(infos[i].Name, PropInfo(infos[i]));
+                Type = type; Ctor = ctor; Props = props.Values.ToArray();
             }
 
             private static PropInfo PropInfo(System.Reflection.PropertyInfo pi)
@@ -118,12 +114,7 @@ namespace System.Text.Json
         private static Func<object> Ctor(Type clr, bool list)
         {
             var type = (list ? typeof(List<>).MakeGenericType(clr) : clr);
-            var ctor =
-                type.GetConstructor
-                (
-                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.CreateInstance,
-                    null, System.Type.EmptyTypes, null
-                );
+            var ctor = type.GetConstructor(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.CreateInstance, null, System.Type.EmptyTypes, null);
             if (ctor != null)
             {
                 var dyn = new System.Reflection.Emit.DynamicMethod("", typeof(object), null, type, true);
@@ -132,8 +123,7 @@ namespace System.Text.Json
                 il.Emit(System.Reflection.Emit.OpCodes.Ret);
                 return (Func<object>)dyn.CreateDelegate(typeof(Func<object>));
             }
-            else
-                return null;
+            return null;
         }
 
         static JsonParser()
@@ -251,8 +241,7 @@ namespace System.Text.Json
                             break;
                     }
                     if (chr < EOF) { nc = ((e && (chr < 128)) ? Esc(chr) : Char(chr)); e = false; } else break;
-                    if (i < n)
-                    {
+                    if (i < n) {
                         while ((i < n) && ((c >= (s = (p = a[i]).Name).Length) || (s[c] != nc))) i++;
                         if ((i >= n) && ((c == 0) || (s[c - 1] != cc))) i = n;
                         c++;
