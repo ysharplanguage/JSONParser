@@ -56,7 +56,7 @@ namespace System.Text.Json
         private const int STRING = 2;
         private const int DOUBLE = 3;
 
-        private IDictionary<Type, int> rtti = new Dictionary<Type, int>();
+        private IDictionary<Type, int> thash = new Dictionary<Type, int>();
         private TypeInfo[] types = new TypeInfo[TDS];
 
         private Func<int, object>[] parse = new Func<int, object>[128];
@@ -65,7 +65,7 @@ namespace System.Text.Json
         private char[] stc = new char[1];
         private System.IO.StreamReader str;
         private Func<int, int> Next;
-        private Action<int> Char;
+        private Func<int, int> Char;
         private Func<int> Read;
         private Action Space;
         private char[] txt;
@@ -78,28 +78,27 @@ namespace System.Text.Json
         {
             internal Action<object, object> Set;
             internal Type Type;
+            internal string Name;
         }
 
         internal class TypeInfo
         {
-            internal IDictionary<string, PropInfo> Props;
             internal Func<object> Ctor;
+            internal PropInfo[] Props;
             internal Type ElementType;
             internal Type Type;
             internal int Inner;
 
             internal TypeInfo(Type type, Func<object> ctor)
             {
-                var pis =
-                    type.
-                    GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public).
-                    Where(p => p.CanWrite).
-                    ToArray();
+                var props = new SortedList<string, PropInfo>();
+                var infos = type.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
+                for (var i = 0; i < infos.Length; i++)
+                    if (infos[i].CanWrite)
+                        props.Add(infos[i].Name, PropInfo(infos[i]));
                 Type = type;
                 Ctor = ctor;
-                Props = new Dictionary<string, PropInfo>();
-                for (var i = 0; i < pis.Length; i++)
-                    Props.Add(pis[i].Name, PropInfo(pis[i]));
+                Props = props.Values.ToArray();
             }
 
             private static PropInfo PropInfo(System.Reflection.PropertyInfo pi)
@@ -112,7 +111,7 @@ namespace System.Text.Json
                     il.Emit(System.Reflection.Emit.OpCodes.Unbox_Any, pi.PropertyType);
                 il.Emit(System.Reflection.Emit.OpCodes.Callvirt, pi.GetSetMethod());
                 il.Emit(System.Reflection.Emit.OpCodes.Ret);
-                return new PropInfo { Type = pi.PropertyType, Set = (Action<object, object>)dyn.CreateDelegate(typeof(Action<object, object>)) };
+                return new PropInfo { Type = pi.PropertyType, Name = pi.Name, Set = (Action<object, object>)dyn.CreateDelegate(typeof(Action<object, object>)) };
             }
         }
 
@@ -148,7 +147,7 @@ namespace System.Text.Json
         }
 
         private Exception Error(string message) { return new Exception(String.Format("{0} at {1} (found: '{2}')", message, at, ((chr < EOF) ? ("\\" + chr) : "EOF"))); }
-        private void Reset(Func<int> read, Func<int, int> next, Action<int> achar, Action space) { at = -1; chr = ANY; Read = read; Next = next; Char = achar; Space = space; }
+        private void Reset(Func<int> read, Func<int, int> next, Func<int, int> achar, Action space) { at = -1; chr = ANY; Read = read; Next = next; Char = achar; Space = space; }
 
         private object Error(int outer) { throw Error("Bad value"); }
         private object Null(int outer) { Next('n'); Next('u'); Next('l'); Next('l'); return null; }
@@ -158,7 +157,7 @@ namespace System.Text.Json
         private void StreamSpace() { if (chr <= ' ') while ((chr = (str.Read(stc, 0, 1) > 0) ? stc[0] : EOF) <= ' ') ; }
         private int StreamRead() { return (chr = (str.Read(stc, 0, 1) > 0) ? stc[0] : EOF); }
         private int StreamNext(int ch) { if (chr != ch) throw Error("Unexpected character"); return (chr = (str.Read(stc, 0, 1) > 0) ? stc[0] : EOF); }
-        private void StreamChar(int ch)
+        private int StreamChar(int ch)
         {
             if (lln >= LBS)
             {
@@ -169,12 +168,13 @@ namespace System.Text.Json
             else
                 lbf[lln++] = (char)ch;
             chr = ((str.Read(stc, 0, 1) > 0) ? stc[0] : EOF);
+            return ch;
         }
 
         private void StringSpace() { if (chr <= ' ') while ((++at < len) && ((chr = txt[at]) <= ' ')) ; }
         private int StringRead() { return (chr = (++at < len) ? txt[at] : EOF); }
         private int StringNext(int ch) { if (chr != ch) throw Error("Unexpected character"); return (chr = (++at < len) ? txt[at] : EOF); }
-        private void StringChar(int ch)
+        private int StringChar(int ch)
         {
             if (lln >= LBS)
             {
@@ -185,11 +185,12 @@ namespace System.Text.Json
             else
                 lbf[lln++] = (char)ch;
             chr = ((++at < len) ? txt[at] : EOF);
+            return ch;
         }
 
-        private void Esc(int ch)
+        private int Esc(int ch)
         {
-            Char(ESC[ch]);
+            return Char(ESC[ch]);
         }
 
         private object Num(int outer)
@@ -220,28 +221,43 @@ namespace System.Text.Json
 
         private object Str(int outer)
         {
-            var esc = false;
-            string s;
+            var a = ((outer < OBJECT) ? types[-outer].Props : null);
+            int n = ((a != null) ? a.Length : 0), c = 0, i = 0, cc = 0, nc = 0;
+            PropInfo p = null;
+            string s = null;
+            var e = false;
             if (chr == '"')
             {
-                lsb.Length = 0; lln = 0;
                 Read();
+                lsb.Length = 0; lln = 0;
                 while (true)
                 {
                     switch (chr)
                     {
                         case '\\':
-                            esc = true;
+                            e = true;
                             Read();
                             break;
                         case '"':
                             Read();
-                            s = ((lsb.Length > 0) ? lsb.ToString() : new string(lbf, 0, lln));
-                            return ((outer > STRING) ? Convert.ChangeType(s, types[outer].Type) : s);
+                            if (i >= n)
+                            {
+                                s = ((lsb.Length > 0) ? lsb.ToString() : new string(lbf, 0, lln));
+                                return ((outer > STRING) ? Convert.ChangeType(s, types[outer].Type) : s);
+                            }
+                            else
+                                return p;
                         default:
                             break;
                     }
-                    if (chr < EOF) { if (esc && (chr < 128)) Esc(chr); else Char(chr); esc = false; } else break;
+                    if (chr < EOF) { nc = ((e && (chr < 128)) ? Esc(chr) : Char(chr)); e = false; } else break;
+                    if (i < n)
+                    {
+                        while ((i < n) && ((c >= (s = (p = a[i]).Name).Length) || (s[c] != nc))) i++;
+                        if ((i >= n) && ((c == 0) || (s[c - 1] != cc))) i = n;
+                        c++;
+                    }
+                    cc = nc;
                 }
             }
             throw Error((outer > OBJECT) ? "Bad literal" : "Bad key");
@@ -266,21 +282,16 @@ namespace System.Text.Json
                 }
                 while (chr < EOF)
                 {
-                    var key = (string)Str(OBJECT);
+                    var key = Str(-outer);
                     Space();
                     Next(':');
                     Space();
-                    if ((outer > OBJECT) && (key.Length > 0))
+                    if (outer > OBJECT)
                     {
-                        //FIXME: quick hack to be able to pass the burning monk's deserialization test, at:
-                        //https://github.com/theburningmonk/SimpleSpeedTester
-                        if (key[0] != '$')
+                        if (key is PropInfo)
                         {
-                            PropInfo pi;
-                            if (types[outer].Props.TryGetValue(key, out pi))
-                                pi.Set(obj, Val(Entry(pi.Type)));
-                            else
-                                Val(OBJECT);
+                            var pi = (PropInfo)key;
+                            pi.Set(obj, Val(Entry(pi.Type)));
                         }
                         else
                             Val(OBJECT);
@@ -362,13 +373,13 @@ namespace System.Text.Json
         private int Entry(Type type, Type elem)
         {
             int outer;
-            if (!rtti.TryGetValue(type, out outer))
+            if (!thash.TryGetValue(type, out outer))
             {
                 bool b = (elem != null);
-                outer = rtti.Count;
+                outer = thash.Count;
                 elem = (elem ?? GetElementType(type));
                 types[outer] = new TypeInfo(type, Ctor((elem ?? type), (elem != null)));
-                rtti.Add(type, outer);
+                thash.Add(type, outer);
                 if (elem != null)
                 {
                     types[outer].ElementType = elem;
