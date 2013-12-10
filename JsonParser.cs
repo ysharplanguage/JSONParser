@@ -54,7 +54,7 @@ namespace System.Text.Json
         private const int OBJECT = 0;
         private const int ARRAY = 1;
         private const int STRING = 2;
-        private const int DOUBLE = 3;
+        private const int INTEGER = 3;
 
         private IDictionary<Type, int> thash = new Dictionary<Type, int>();
         private TypeInfo[] types = new TypeInfo[TDS];
@@ -84,6 +84,7 @@ namespace System.Text.Json
 
         internal class TypeInfo
         {
+            internal Func<string, object> Convert;
             internal Func<object> Ctor;
             internal PropInfo[] Props;
             internal Type ElementType;
@@ -91,11 +92,37 @@ namespace System.Text.Json
             internal int Outer;
             internal int Inner;
 
-            private static Func<object> GetCtor(Type clr, bool list)
+            private object DefaultConvert(string s)
+            {
+                return System.Convert.ChangeType(s, Type);
+            }
+
+            private Func<string, object> GetConvert(Type clr, int outer)
+            {
+                if (outer > STRING)
+                {
+                    var type = typeof(Func<,>).MakeGenericType(typeof(string), clr);
+                    var conv = clr.GetMethod("Parse", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public, null, new Type[] { typeof(string) }, null);
+                    if (clr.IsValueType && (conv != null))
+                    {
+                        var dyn = new System.Reflection.Emit.DynamicMethod("", typeof(object), new Type[] { typeof(string) }, type, true);
+                        var il = dyn.GetILGenerator();
+                        il.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);
+                        il.Emit(System.Reflection.Emit.OpCodes.Call, conv);
+                        il.Emit(System.Reflection.Emit.OpCodes.Box, clr);
+                        il.Emit(System.Reflection.Emit.OpCodes.Ret);
+                        return (Func<string, object>)dyn.CreateDelegate(typeof(Func<string, object>));
+                    }
+                    return DefaultConvert;
+                }
+                return null;
+            }
+
+            private Func<object> GetCtor(Type clr, int outer, bool list)
             {
                 var type = (list ? typeof(List<>).MakeGenericType(clr) : clr);
                 var ctor = type.GetConstructor(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.CreateInstance, null, System.Type.EmptyTypes, null);
-                if ((type != typeof(object)) && (ctor != null))
+                if (ctor != null)
                 {
                     var dyn = new System.Reflection.Emit.DynamicMethod("", typeof(object), null, type, true);
                     var il = dyn.GetILGenerator();
@@ -126,7 +153,8 @@ namespace System.Text.Json
                 Type = type;
                 Outer = outer;
                 ElementType = elem;
-                Ctor = GetCtor((elem ?? type), (elem != null));
+                Convert = GetConvert(type, outer);
+                Ctor = GetCtor((elem ?? type), outer, (elem != null));
                 for (var i = 0; i < infos.Length; i++)
                     if (infos[i].CanWrite)
                         props.Add(infos[i].Name, GetPropInfo(infos[i]));
@@ -189,28 +217,38 @@ namespace System.Text.Json
 
         private object Num(int outer)
         {
+            int it = ((outer == INTEGER) ? 1 : 0), n = 0;
             var ch = chr; string s;
             lsb.Length = 0; lln = 0;
             if (ch == '-')
+            {
                 ch = Char(ch);
+                it = -it;
+            }
             while ((ch >= '0') && (ch <= '9'))
+            {
+                n *= 10; n += (ch - 48);
                 ch = Char(ch);
+            }
             if (ch == '.')
             {
+                it = 0;
                 ch = Char(ch);
                 while ((ch >= '0') && (ch <= '9'))
                     ch = Char(ch);
             }
             if ((ch == 'e') || (ch == 'E'))
             {
+                it = 0;
                 ch = Char(ch);
                 if ((ch == '-') || (ch == '+'))
                     ch = Char(ch);
                 while ((ch >= '0') && (ch <= '9'))
                     ch = Char(ch);
             }
+            if (it != 0) return (it * n);
             s = ((lsb.Length > 0) ? lsb.ToString() : new string(lbf, 0, lln));
-            return ((outer > STRING) ? Convert.ChangeType(s, types[outer].Type) : s);
+            return ((outer > STRING) ? types[outer].Convert(s) : s);
         }
 
         private object Str(int outer)
@@ -234,7 +272,7 @@ namespace System.Text.Json
                             if (i >= n)
                             {
                                 s = ((lsb.Length > 0) ? lsb.ToString() : new string(lbf, 0, lln));
-                                return ((outer > STRING) ? Convert.ChangeType(s, types[outer].Type) : s);
+                                return ((outer > STRING) ? types[outer].Convert(s) : s);
                             }
                             return p;
                         default:
@@ -255,7 +293,9 @@ namespace System.Text.Json
 
         private object Obj(int outer)
         {
-            var cached = types[outer]; var obj = cached.Ctor(); var ch = chr;
+            var cached = types[outer];
+            var obj = cached.Ctor();
+            var ch = chr;
             if (ch == '{')
             {
                 Read();
@@ -297,7 +337,8 @@ namespace System.Text.Json
 
         private object Arr(int outer)
         {
-            var cached = types[outer = (outer >= ARRAY) ? outer : ARRAY]; var ch = chr;
+            var cached = types[outer = (outer >= ARRAY) ? outer : ARRAY];
+            var ch = chr;
             if (ch == '[')
             {
                 IList list;
@@ -416,7 +457,7 @@ namespace System.Text.Json
             Entry(typeof(object));
             Entry(typeof(object[]), typeof(object));
             Entry(typeof(string), typeof(char));
-            Entry(typeof(double));
+            Entry(typeof(int));
         }
 
         public T Parse<T>(System.IO.Stream input)
