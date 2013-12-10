@@ -193,8 +193,7 @@ namespace System.Text.Json
             }
             else
                 lbf[lln++] = (char)ch;
-            chr = ((str.Read(stc, 0, 1) > 0) ? stc[0] : EOF);
-            return chr;
+            return (chr = (str.Read(stc, 0, 1) > 0) ? stc[0] : EOF);
         }
 
         private int StringSpace() { if (chr <= ' ') while ((++at < len) && ((chr = txt[at]) <= ' ')) ; return chr; }
