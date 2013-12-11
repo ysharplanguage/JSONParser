@@ -403,8 +403,8 @@ namespace System.Text.Json
 
 		private TEnum Enum<TEnum>(int outer) where TEnum : struct
 		{
-			Space();
-			return (TEnum)System.Enum.Parse(typeof(TEnum), (string)Str(OBJECT));
+			var ch = Space();
+			return ((ch == '"') ? (TEnum)System.Enum.Parse(typeof(TEnum), (string)Str(OBJECT)) : (TEnum)Num(OBJECT));
 		}
 
 		private object Str(int outer)
