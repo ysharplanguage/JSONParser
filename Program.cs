@@ -17,45 +17,45 @@ using System.Text.Json;
 
 namespace Test
 {
-    class Program
-    {
-        const string TINY_TEST_FILE_PATH = @"..\..\TestData\tiny.json.txt";
-        const string SMALL_TEST_FILE_PATH = @"..\..\TestData\small.json.txt";
-        const string FATHERS_TEST_FILE_PATH = @"..\..\TestData\fathers.json.txt";
-        const string HUGE_TEST_FILE_PATH = @"..\..\TestData\huge.json.txt";
+	class Program
+	{
+		const string TINY_TEST_FILE_PATH = @"..\..\TestData\tiny.json.txt";
+		const string SMALL_TEST_FILE_PATH = @"..\..\TestData\small.json.txt";
+		const string FATHERS_TEST_FILE_PATH = @"..\..\TestData\fathers.json.txt";
+		const string HUGE_TEST_FILE_PATH = @"..\..\TestData\huge.json.txt";
 
-        /* Note: "huge.json.txt" is in fact a copy of this file:
-         * 
-         * https://github.com/zeMirco/sf-city-lots-json
-         * 
-         * "City Lots San Francisco in .json
-         * I needed a really big .json file for testing various code.
-         * The CityLots spatial data layer is a representation of the City and County of San Francisco's Subdivision parcels. The initial file is in the .shp (shapefile) format and as the conversion process is quite cumbersome I uploaded the data as a .json file.
-         * Warning: size is 189,9 MB."
-         */
+		/* Note: "huge.json.txt" is in fact a copy of this file:
+		 * 
+		 * https://github.com/zeMirco/sf-city-lots-json
+		 * 
+		 * "City Lots San Francisco in .json
+		 * I needed a really big .json file for testing various code.
+		 * The CityLots spatial data layer is a representation of the City and County of San Francisco's Subdivision parcels. The initial file is in the .shp (shapefile) format and as the conversion process is quite cumbersome I uploaded the data as a .json file.
+		 * Warning: size is 189,9 MB."
+		 */
 
-        /*  System.Text.Json.JsonParser's figures vs. JSON.NET's, v5.0 r8:
+		/*  System.Text.Json.JsonParser's figures vs. JSON.NET's, v5.0 r8:
 
-            (.NET 4.0 target, on Ideapad w/ Intel Core i5 CPU @ 2.50GHz, 6GB RAM, running Win7 64bit)
+			(.NET 4.0 target, on Ideapad w/ Intel Core i5 CPU @ 2.50GHz, 6GB RAM, running Win7 64bit)
 
-            "Loop" Test of tiny JSON (deserializing x times the JSON contained in the tiny.json.txt file = 91 bytes):
-            10,000 iterations: in ~ 75 milliseconds vs. JSON.NET 5.0 r8 in ~ 250 milliseconds
-            100,000 iterations: in ~ 650 milliseconds vs. JSON.NET 5.0 r8 in ~ 900 milliseconds
-            1,000,000 iterations: in ~ 6.4 seconds vs. JSON.NET 5.0 r8 in ~ 8.3 seconds
+			"Loop" Test of tiny JSON (deserializing x times the JSON contained in the tiny.json.txt file = 91 bytes):
+			10,000 iterations: in ~ 75 milliseconds vs. JSON.NET 5.0 r8 in ~ 250 milliseconds
+			100,000 iterations: in ~ 650 milliseconds vs. JSON.NET 5.0 r8 in ~ 900 milliseconds
+			1,000,000 iterations: in ~ 6.4 seconds vs. JSON.NET 5.0 r8 in ~ 8.3 seconds
 
-            "Loop" Test of small JSON (deserializing x times the JSON contained in the small.json.txt file ~ 3.5 kb):
-            10,000 iterations: in ~ 1.2 second vs. JSON.NET 5.0 r8 in ~ 2.2 seconds
-            100,000 iterations: in ~ 12.4 seconds vs. JSON.NET 5.0 r8... OutOfMemoryException
+			"Loop" Test of small JSON (deserializing x times the JSON contained in the small.json.txt file ~ 3.5 kb):
+			10,000 iterations: in ~ 1.2 second vs. JSON.NET 5.0 r8 in ~ 2.2 seconds
+			100,000 iterations: in ~ 12.4 seconds vs. JSON.NET 5.0 r8... OutOfMemoryException
 
-            Note: fathers.json.txt was generated using:
-            http://experiments.mennovanslooten.nl/2010/mockjson/tryit.html
+			Note: fathers.json.txt was generated using:
+			http://experiments.mennovanslooten.nl/2010/mockjson/tryit.html
 
-            "Fathers" Test (12 mb JSON file):
-            Parsed in ~ 290 milliseconds vs. JSON.NET 5.0 r8 in ~ 510 milliseconds
+			"Fathers" Test (12 mb JSON file):
+			Parsed in ~ 290 milliseconds vs. JSON.NET 5.0 r8 in ~ 510 milliseconds
 
-            "Huge" Test (180 mb JSON file):
-            Parsed in ~ 9.75 seconds vs. JSON.NET 5.0 r8... OutOfMemoryException
-         */
+			"Huge" Test (180 mb JSON file):
+			Parsed in ~ 9.75 seconds vs. JSON.NET 5.0 r8... OutOfMemoryException
+		 */
 
 		static void LoopTest(string parserName, Func<string, object> parseFunc, string testFile, int count)
 		{
@@ -240,9 +240,9 @@ namespace Test
 			Console.ReadKey();
 		}
 
-        static void Main(string[] args)
-        {
-            SpeedTests();
-        }
-    }
+		static void Main(string[] args)
+		{
+			SpeedTests();
+		}
+	}
 }
