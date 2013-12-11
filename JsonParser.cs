@@ -90,6 +90,7 @@ namespace System.Text.Json
 			internal Func<string, object> Convert;
 			internal Func<object> Ctor;
 			internal PropInfo[] Props;
+			internal PropInfo Items;
 			internal Type ElementType;
 			internal Type Type;
 			internal int Outer;
@@ -149,47 +150,49 @@ namespace System.Text.Json
 				return null;
 			}
 
-			private static PropInfo GetPropInfo(System.Reflection.PropertyInfo pi, System.Reflection.MethodInfo pm)
+			private static System.Reflection.MethodInfo GetParseMethod(Type type)
+			{
+				var val = typeof(JsonParser).GetMethod("Val", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+				if (type.IsEnum)
+					return typeof(JsonParser).GetMethod("Enum", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).MakeGenericMethod(type);
+				else if (WellKnown.Contains(type))
+					return typeof(JsonParser).GetMethod(type.Name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+				else
+					return val;
+			}
+
+			private static PropInfo GetPropInfo(Type type, string name, System.Reflection.MethodInfo smethod, System.Reflection.MethodInfo pmethod)
 			{
 				var dyn = new System.Reflection.Emit.DynamicMethod("", null, new Type[] { typeof(JsonParser), typeof(int), typeof(object) }, typeof(PropInfo));
 				var il = dyn.GetILGenerator();
-				il.DeclareLocal(pm.ReturnType);
+				il.DeclareLocal(pmethod.ReturnType);
 				il.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);
 				il.Emit(System.Reflection.Emit.OpCodes.Ldarg_1);
-				il.Emit(System.Reflection.Emit.OpCodes.Call, pm);
-				if (pi.PropertyType.IsValueType && (pm.ReturnType == typeof(object)))
-					il.Emit(System.Reflection.Emit.OpCodes.Unbox_Any, pi.PropertyType);
+				il.Emit(System.Reflection.Emit.OpCodes.Callvirt, pmethod);
+				if (type.IsValueType && (pmethod.ReturnType == typeof(object)))
+					il.Emit(System.Reflection.Emit.OpCodes.Unbox_Any, type);
 				il.Emit(System.Reflection.Emit.OpCodes.Stloc_0);
 				il.Emit(System.Reflection.Emit.OpCodes.Ldarg_2);
 				il.Emit(System.Reflection.Emit.OpCodes.Ldloc_0);
-				il.Emit(System.Reflection.Emit.OpCodes.Callvirt, pi.GetSetMethod());
+				il.Emit(System.Reflection.Emit.OpCodes.Callvirt, smethod);
 				il.Emit(System.Reflection.Emit.OpCodes.Ret);
-				return new PropInfo { Type = pi.PropertyType, Name = pi.Name, Set = (Action<JsonParser, int, object>)dyn.CreateDelegate(typeof(Action<JsonParser, int, object>)) };
+				return new PropInfo { Type = type, Name = name, Set = (Action<JsonParser, int, object>)dyn.CreateDelegate(typeof(Action<JsonParser, int, object>)) };
 			}
 
 			internal TypeInfo(Type type, int outer, Type elem)
 			{
 				var infos = type.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
 				var props = new SortedList<string, PropInfo>();
-				var val = typeof(JsonParser).GetMethod("Val", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
 				Type = type;
 				Outer = outer;
 				ElementType = elem;
-				Convert = GetConvert(type, outer);
-				Ctor = GetCtor((elem ?? type), outer, (elem != null));
+				Convert = GetConvert(Type, outer);
+				Ctor = GetCtor((ElementType ?? Type), outer, (ElementType != null));
 				for (var i = 0; i < infos.Length; i++)
 					if (infos[i].CanWrite)
-					{
-						System.Reflection.MethodInfo pm;
-						if (infos[i].PropertyType.IsEnum)
-							pm = typeof(JsonParser).GetMethod("Enum", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).MakeGenericMethod(infos[i].PropertyType);
-						else if (WellKnown.Contains(infos[i].PropertyType))
-							pm = typeof(JsonParser).GetMethod(infos[i].PropertyType.Name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-						else
-							pm = val;
-						props.Add(infos[i].Name, GetPropInfo(infos[i], pm));
-					}
+						props.Add(infos[i].Name, GetPropInfo(infos[i].PropertyType, infos[i].Name, infos[i].GetSetMethod(), GetParseMethod(infos[i].PropertyType)));
 				Props = props.Values.ToArray();
+				Items = ((ElementType != null) ? GetPropInfo(ElementType, "", typeof(List<>).MakeGenericType(ElementType).GetMethod("Add", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public), GetParseMethod(ElementType)) : null);
 			}
 		}
 
@@ -470,8 +473,8 @@ namespace System.Text.Json
 					{
 						if (key is PropInfo)
 						{
-							var pi = (PropInfo)key;
-							pi.Set(this, pi.Outer, obj);
+							var prop = (PropInfo)key;
+							prop.Set(this, prop.Outer, obj);
 						}
 						else
 							Val(OBJECT);
@@ -514,7 +517,8 @@ namespace System.Text.Json
 				}
 				while (ch < EOF)
 				{
-					list.Add(Val(cached.Inner));
+					var items = cached.Items;
+					items.Set(this, cached.Inner, list);
 					ch = Space();
 					if (ch == ']')
 					{
