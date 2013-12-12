@@ -1,4 +1,8 @@
 JSONParser
 ==========
 
-A minimalistic, and pretty fast JSON parser
+(Obsolete)
+
+Please refer to this repo instead:
+
+https://github.com/ysharplanguage/FastJsonParser
