@@ -3,6 +3,6 @@ JSONParser
 
 (Obsolete)
 
-Please refer to this repo instead:
+Please refer to this repository instead:
 
 https://github.com/ysharplanguage/FastJsonParser
